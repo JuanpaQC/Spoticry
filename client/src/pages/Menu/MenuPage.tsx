@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { tracks } from '../../data/tracks.js'
 import { usePlayer } from '../../lib/playerContext.jsx'
 import {
@@ -9,8 +10,11 @@ import {
   profileImage,
 } from '../Aura/auraUi.tsx'
 
-const heroImage =
-  'https://lh3.googleusercontent.com/aida-public/AB6AXuDS4FyFOezNEqhXHka97BH1dCrZNLGZjtSg8gBywBNXw-ObMW6bSJK5TbMHuJ2EWnFuirTh4QUq9fPbUhqCyGD_7v5yaBxLt5IWnPUHDjVV4H13__G6mZyFr9UPxyNvu4bu1LoIJ1XzHJ-FOQT3L7S1nUq-4cgJwFUbjg4hyfboovgGUTc9zyR3pHvlfuc9Bs78ykbYV9QxCw9guvm1PF-bMlZ4a-dprS9pgAGzCg8v2SHNkaRV_DDdcaLn-EZAQ5tQks7Ws6UeAL89'
+const heroTracks = tracks.filter((track) =>
+  track.cover?.startsWith('/music/covers/'),
+)
+const HERO_COVER_INTERVAL_MS = 5000
+const HERO_COVER_FADE_MS = 700
 
 // Card de track. Click → play, y la queue del player pasa a ser todo
 // `tracks` así next/previous se mueven dentro del manifiesto.
@@ -76,6 +80,54 @@ function TrackRow({ track, onPlay, isActive }) {
 
 function MenuPage() {
   const { play, currentTrack } = usePlayer()
+  const [featuredTrackIndex, setFeaturedTrackIndex] = useState(0)
+  const [heroCoversReady, setHeroCoversReady] = useState(
+    heroTracks.length === 0,
+  )
+
+  const featuredTrack =
+    heroTracks.length > 0
+      ? heroTracks[featuredTrackIndex % heroTracks.length]
+      : null
+  const recentTracks = currentTrack
+    ? [currentTrack, ...tracks.filter((track) => track.id !== currentTrack.id)]
+    : tracks
+
+  useEffect(() => {
+    if (heroTracks.length === 0) return undefined
+
+    let cancelled = false
+
+    const coverLoads = heroTracks.map(
+      (track) =>
+        new Promise((resolve) => {
+          const image = new window.Image()
+          image.onload = resolve
+          image.onerror = resolve
+          image.src = track.cover
+        }),
+    )
+
+    Promise.all(coverLoads).then(() => {
+      if (!cancelled) setHeroCoversReady(true)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!heroCoversReady || heroTracks.length <= 1) return undefined
+
+    const intervalId = window.setInterval(() => {
+      setFeaturedTrackIndex((index) => (index + 1) % heroTracks.length)
+    }, HERO_COVER_INTERVAL_MS)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [heroCoversReady])
 
   // Reproduce un track puntual y reemplaza la queue con todos los tracks
   // del manifiesto. Así desde el menú el "siguiente" recorre todo.
@@ -83,9 +135,9 @@ function MenuPage() {
     play(track, tracks)
   }
 
-  // Hero "Listen Now": arranca con el primer track del manifiesto.
+  // Hero "Listen Now": reproduce el track cuyo cover está destacado.
   const handleHeroPlay = () => {
-    if (tracks.length > 0) play(tracks[0], tracks)
+    if (featuredTrack) play(featuredTrack, tracks)
   }
 
   return (
@@ -154,10 +206,10 @@ function MenuPage() {
 
           <section>
             <h2 className="mb-4 text-2xl font-semibold text-white">
-              Your Tracks
+              Escuchados recientes
             </h2>
             <div className="space-y-2">
-              {tracks.map((track) => (
+              {recentTracks.map((track) => (
                 <TrackRow
                   isActive={currentTrack?.id === track.id}
                   key={track.id}
@@ -180,58 +232,105 @@ function MenuPage() {
           <AuraAppSidebar activeKey="home" />
 
           <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-10 pb-32 pt-2">
-            {/* Hero. "Listen Now" arranca el primer track del manifiesto. */}
-            <section className="group relative mb-12 h-[420px] overflow-hidden rounded-[2rem]">
-              <img
-                alt="Featured background"
-                className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
-                src={heroImage}
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/25 to-transparent" />
-              <div className="absolute bottom-0 left-0 flex w-full flex-col items-start gap-4 p-12">
-                <span className="rounded-full border border-violet-500/30 bg-violet-500/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-violet-300 backdrop-blur-md">
-                  Tu colección
-                </span>
-                <h1 className="text-6xl font-bold tracking-[-0.04em] text-white">
-                  Reproducí lo que cargaste
-                </h1>
-                <p className="max-w-xl text-base leading-7 text-zinc-300">
-                  Tus canciones del manifiesto. Hacé play en cualquier card
-                  para empezar a escuchar.
-                </p>
-                <div className="mt-4 flex gap-4">
-                  <button
-                    className="flex items-center gap-2 rounded-full bg-violet-500 px-8 py-3 font-semibold text-white transition-all hover:bg-violet-400 disabled:opacity-40"
-                    disabled={tracks.length === 0}
-                    onClick={handleHeroPlay}
-                    type="button"
-                  >
-                    <Icon filled name="play_arrow" />
-                    Listen Now
-                  </button>
-                  <ScreenLink
-                    aria-label="Go to search"
-                    className="rounded-full border border-white/10 bg-white/5 px-8 py-3 font-semibold text-white backdrop-blur-md transition-all hover:bg-white/10"
-                    screen="search"
-                  >
-                    Search Tracks
-                  </ScreenLink>
+            {/* Hero. "Listen Now" reproduce el cover destacado actual. */}
+            <section className="relative mb-12 min-h-[440px] overflow-hidden rounded-[2rem] border border-white/10 bg-[#071827]">
+              {heroTracks.length > 0 ? (
+                heroTracks.map((track, index) => (
+                  <img
+                    aria-hidden="true"
+                    alt=""
+                    className={`absolute inset-0 h-full w-full object-cover blur-2xl transition-opacity ease-in-out ${
+                      index === featuredTrackIndex ? 'opacity-25' : 'opacity-0'
+                    }`}
+                    decoding="async"
+                    key={`${track.id}-hero-glow`}
+                    loading="eager"
+                    src={track.cover}
+                    style={{ transitionDuration: `${HERO_COVER_FADE_MS}ms` }}
+                  />
+                ))
+              ) : null}
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_40%,rgba(34,211,238,0.22),transparent_34%),linear-gradient(115deg,rgba(5,20,36,0.98)_0%,rgba(5,20,36,0.88)_52%,rgba(5,20,36,0.46)_100%)]" />
+
+              <div className="relative grid min-h-[440px] grid-cols-1 items-center gap-8 p-8 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] xl:gap-10 xl:p-12">
+                <div className="flex min-w-0 flex-col items-start gap-4">
+                  <span className="rounded-full border border-violet-500/30 bg-violet-500/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-violet-300 backdrop-blur-md">
+                    Tu colección
+                  </span>
+                  <h1 className="max-w-3xl text-5xl font-bold leading-[0.95] tracking-[-0.04em] text-white xl:text-6xl">
+                    Reproducí lo que te encanta
+                  </h1>
+                  <p className="max-w-xl text-base leading-7 text-zinc-300">
+                    El cover destacado cambia suavemente. Dale play y empieza
+                    a sonar esa canción.
+                  </p>
+
+                  <div className="mt-4 flex gap-4">
+                    <button
+                      className="flex items-center gap-2 rounded-full bg-violet-500 px-8 py-3 font-semibold text-white transition-all hover:bg-violet-400 disabled:opacity-40"
+                      disabled={!featuredTrack}
+                      onClick={handleHeroPlay}
+                      type="button"
+                    >
+                      <Icon filled name="play_arrow" />
+                      Listen Now
+                    </button>
+                    <ScreenLink
+                      aria-label="Go to search"
+                      className="rounded-full border border-white/10 bg-white/5 px-8 py-3 font-semibold text-white backdrop-blur-md transition-all hover:bg-white/10"
+                      screen="search"
+                    >
+                      Search Tracks
+                    </ScreenLink>
+                  </div>
                 </div>
+
+                {featuredTrack ? (
+                  <div className="relative justify-self-center xl:justify-self-end">
+                    <div className="absolute -inset-5 rounded-[2rem] bg-cyan-400/10 blur-2xl" />
+                    <div className="relative aspect-square w-[min(68vw,320px)] overflow-hidden rounded-[1.6rem] border border-white/15 bg-black/25 p-3 shadow-[0_28px_80px_rgba(0,0,0,0.45)] xl:w-[min(32vw,360px)]">
+                      <div className="relative h-full w-full rounded-[1.15rem]">
+                        {heroTracks.map((track, index) => (
+                          <img
+                            aria-hidden={index !== featuredTrackIndex}
+                            alt={
+                              index === featuredTrackIndex
+                                ? `${track.album} cover`
+                                : ''
+                            }
+                            className={`absolute inset-0 h-full w-full rounded-[1.15rem] object-contain transition-opacity ease-in-out ${
+                              index === featuredTrackIndex
+                                ? 'opacity-100'
+                                : 'opacity-0'
+                            }`}
+                            decoding="async"
+                            key={`${track.id}-hero-cover`}
+                            loading="eager"
+                            src={track.cover}
+                            style={{
+                              transitionDuration: `${HERO_COVER_FADE_MS}ms`,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </section>
 
             <section>
               <div className="mb-8">
                 <h2 className="mb-2 text-3xl font-semibold text-white">
-                  Your Tracks
+                  Escuchados recientes
                 </h2>
                 <p className="text-sm text-zinc-500">
-                  Tu colección lista para reproducir.
+                  Volvé rápido a las canciones que tenés a mano.
                 </p>
               </div>
 
               <div className="grid gap-8 lg:grid-cols-3 xl:grid-cols-5">
-                {tracks.map((track) => (
+                {recentTracks.map((track) => (
                   <TrackCard
                     isActive={currentTrack?.id === track.id}
                     key={track.id}

@@ -50,6 +50,15 @@ export const tracks = [
     src: '/music/audio/prfct - Sabrina Carpenter.mp3',
     cover: '/music/covers/prfct.jpg',
   },
+  {
+    id: 'Neighborhood',
+    title: 'Softcore',
+    artist: 'The Neighbourhood',
+    album: 'The Neighbourhood',
+    duration: '3:30',
+    src: '/music/audio/The Neighbourhood - Softcore.mp3',
+    cover: '/music/covers/TheNeighbourhood.jpg',
+  }
 ]
 
 // Helper para buscar una canción por id sin tener que repetir

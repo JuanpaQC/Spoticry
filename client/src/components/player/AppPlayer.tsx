@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react'
 import { formatTime, usePlayer } from '../../lib/playerContext.jsx'
+
+const PLAYER_HIDE_DELAY_MS = 90_000
 
 // Iconito de Material Symbols. `filled` alterna la variante sólida.
 function PlayerIcon({ name, filled = false, className = '' }) {
@@ -22,6 +25,31 @@ function computeRatio(event) {
   return Math.max(0, Math.min(1, ratio))
 }
 
+function useDelayedPlayerVisibility(currentTrack, isPlaying, isLoading) {
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    if (!currentTrack) {
+      setIsVisible(false)
+      return undefined
+    }
+
+    if (isPlaying || isLoading) {
+      setIsVisible(true)
+      return undefined
+    }
+
+    setIsVisible(true)
+    const timeoutId = window.setTimeout(() => {
+      setIsVisible(false)
+    }, PLAYER_HIDE_DELAY_MS)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [currentTrack, isPlaying, isLoading])
+
+  return currentTrack && isVisible
+}
+
 // Mini-player para mobile (tarjeta flotante arriba de los tabs).
 // Se oculta si todavía no hay canción cargada (currentTrack === null),
 // así no aparece vacío en la pantalla Home antes de tocar play.
@@ -36,8 +64,13 @@ function MobileMiniPlayer({ className = '' }) {
     next,
     previous,
   } = usePlayer()
+  const showPlayer = useDelayedPlayerVisibility(
+    currentTrack,
+    isPlaying,
+    isLoading,
+  )
 
-  if (!currentTrack) return null
+  if (!showPlayer) return null
 
   const progress = duration > 0 ? `${(currentTime / duration) * 100}%` : '0%'
 
@@ -114,8 +147,13 @@ function DesktopPlayerBar({ className = '' }) {
     cycleRepeat,
     toggleShuffle,
   } = usePlayer()
+  const showPlayer = useDelayedPlayerVisibility(
+    currentTrack,
+    isPlaying,
+    isLoading,
+  )
 
-  if (!currentTrack) return null
+  if (!showPlayer) return null
 
   const progress = duration > 0 ? `${(currentTime / duration) * 100}%` : '0%'
   // El volumen viene en 0..1; lo convertimos a porcentaje para el width
