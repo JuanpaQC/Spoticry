@@ -1,0 +1,25 @@
+[package]
+name = "Spoticry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Servidor web
+actix-web = "4"
+actix-cors = "0.7"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialización / deserialización JSON
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Cliente HTTP para llamar a Supabase
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Variables de entorno (.env)
+dotenv = "0.15"
+
+# Para streaming de audio (bytes asincrónicos)
+futures-util = "0.3"

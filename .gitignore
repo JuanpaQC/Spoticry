@@ -1,0 +1,13 @@
+# Rust
+server/target/
+
+# Variables de ambiente (nunca subir al repo)
+server/.env
+.env
+
+# Node
+client/node_modules/
+client/dist/
+
+# OS
+.DS_Store
