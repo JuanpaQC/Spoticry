@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { usePlayer } from '../../lib/playerContext.jsx'
 import { useSongs } from '../../lib/songsContext.jsx'
 import {
   AuraAppSidebar,
@@ -127,7 +128,7 @@ function SongForm({ onSubmit, busy }) {
   )
 }
 
-function SongRow({ track, onDelete, busy }) {
+function SongRow({ track, onDelete, onCancel, isPending, busy }) {
   return (
     <div className="flex items-center gap-4 rounded-2xl border border-white/5 bg-white/[0.03] p-3">
       <div className="h-14 w-14 flex-none overflow-hidden rounded-xl bg-zinc-900">
@@ -151,23 +152,48 @@ function SongRow({ track, onDelete, busy }) {
         </p>
       </div>
 
-      <button
-        aria-label={`Eliminar ${track.title}`}
-        className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-40"
-        disabled={busy}
-        onClick={() => onDelete(track)}
-        type="button"
-      >
-        <Icon name="delete" />
-      </button>
+      {isPending ? (
+        <div className="flex items-center gap-2">
+          <button
+            aria-label="Cancelar eliminación"
+            className="rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-400 transition-colors hover:text-zinc-100"
+            onClick={onCancel}
+            type="button"
+          >
+            Cancelar
+          </button>
+          <button
+            aria-label={`Confirmar eliminar ${track.title}`}
+            className="flex items-center gap-1 rounded-lg bg-rose-500/20 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-rose-400 transition-colors hover:bg-rose-500/30 disabled:opacity-40"
+            disabled={busy}
+            onClick={() => onDelete(track)}
+            type="button"
+          >
+            <Icon name="delete" />
+            Eliminar
+          </button>
+        </div>
+      ) : (
+        <button
+          aria-label={`Eliminar ${track.title}`}
+          className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-40"
+          disabled={busy}
+          onClick={() => onDelete(track)}
+          type="button"
+        >
+          <Icon name="delete" />
+        </button>
+      )}
     </div>
   )
 }
 
 function SongsAdminPage() {
   const { tracks, addTrack, removeTrack, loading, error } = useSongs()
+  const { currentTrack } = usePlayer()
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [pendingDeleteId, setPendingDeleteId] = useState(null)
 
   const sortedTracks = useMemo(
     () => [...tracks].sort((a, b) => a.title.localeCompare(b.title)),
@@ -187,11 +213,24 @@ function SongsAdminPage() {
     }
   }
 
+  const requestDelete = (track) => {
+    if (currentTrack?.id === track.id) {
+      setMessage('No se puede eliminar una canción que está en reproducción.')
+      return
+    }
+    setPendingDeleteId(track.id)
+    setMessage('')
+  }
+
   const handleDelete = async (track) => {
-    const ok = window.confirm(`¿Eliminar "${track.title}" de la base?`)
-    if (!ok) return
+    if (currentTrack?.id === track.id) {
+      setMessage('No se puede eliminar una canción que está en reproducción.')
+      setPendingDeleteId(null)
+      return
+    }
     setBusy(true)
     setMessage('')
+    setPendingDeleteId(null)
     try {
       await removeTrack(track.id)
       setMessage('Canción eliminada.')
@@ -235,8 +274,10 @@ function SongsAdminPage() {
         {sortedTracks.map((track) => (
           <SongRow
             busy={busy}
+            isPending={pendingDeleteId === track.id}
             key={track.id}
-            onDelete={handleDelete}
+            onCancel={() => setPendingDeleteId(null)}
+            onDelete={pendingDeleteId === track.id ? handleDelete : requestDelete}
             track={track}
           />
         ))}
