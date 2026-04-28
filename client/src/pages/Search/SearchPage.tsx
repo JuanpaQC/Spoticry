@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { tracks } from '../../data/tracks.js'
 import { usePlayer } from '../../lib/playerContext.jsx'
+import { useSongs } from '../../lib/songsContext.jsx'
 import {
   AuraAppSidebar,
   AuraDesktopTopBar,
@@ -79,6 +79,7 @@ function ResultRow({ track, onPlay, isActive }) {
 
 function SearchPage() {
   const { play, currentTrack } = usePlayer()
+  const { tracks, loading } = useSongs()
   const [query, setQuery] = useState('')
 
   // Memo del filtro (no es crítico con 3 canciones, pero es prolijo).
@@ -115,6 +116,7 @@ function SearchPage() {
         <div className="space-y-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
             {results.length} resultado{results.length === 1 ? '' : 's'}
+            {loading ? ' · sync' : ''}
           </p>
           {results.map((track) => (
             <ResultRow

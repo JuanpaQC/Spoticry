@@ -6,8 +6,8 @@ import {
   Icon,
   ScreenLink,
 } from '../Aura/auraUi.tsx'
-import { findTrackById } from '../../data/tracks.js'
 import { usePlaylists } from '../../lib/playlistsContext.jsx'
+import { useSongs } from '../../lib/songsContext.jsx'
 
 // Paleta de gradientes para que cada playlist se vea distinta en la
 // grilla. Como todas las playlists del usuario son suyas, no tenemos
@@ -41,7 +41,7 @@ function formatUpdated(timestamp) {
 // que la UI necesita (cover de la primera canción, accent, etiqueta de
 // cantidad de tracks, etc.). De esta forma los componentes visuales no
 // repiten la misma lógica.
-function decoratePlaylist(playlist, index) {
+function decoratePlaylist(playlist, index, findTrackById) {
   const firstTrack =
     playlist.trackIds.length > 0 ? findTrackById(playlist.trackIds[0]) : null
   const tracksCount = playlist.trackIds.length
@@ -182,7 +182,7 @@ function MobileEmptyLibraryState() {
       </h2>
       <p className="mt-3 text-sm leading-6 text-zinc-400">
         Tocá el botón de abajo para crear tu primera playlist. Las playlists
-        se guardan en este navegador hasta que conectemos el backend.
+        se guardan en el servidor y se sincronizan con Supabase.
       </p>
 
       <ScreenLink
@@ -206,9 +206,8 @@ function DesktopEmptyLibraryState() {
         Todavía no creaste ninguna playlist
       </h2>
       <p className="mt-4 max-w-2xl text-base leading-7 text-zinc-400">
-        Las playlists se guardan en este navegador (en `localStorage`) hasta
-        que conectemos el backend. Cada playlist nueva aparece acá en el
-        listado y la podés abrir para agregarle canciones.
+        Cada playlist nueva aparece acá en el listado y la podés abrir para
+        agregarle canciones del catálogo conectado al servidor.
       </p>
 
       <div className="mt-8 flex items-center gap-4">
@@ -228,13 +227,14 @@ function DesktopEmptyLibraryState() {
 }
 
 function LibraryPage() {
-  const { playlists } = usePlaylists()
+  const { playlists, loading, error } = usePlaylists()
+  const { findTrackById } = useSongs()
 
   // Decoramos una sola vez por render, no por cada componente hijo.
   // useMemo evita recalcular si la lista no cambió.
   const decorated = useMemo(
-    () => playlists.map((p, i) => decoratePlaylist(p, i)),
-    [playlists],
+    () => playlists.map((p, i) => decoratePlaylist(p, i, findTrackById)),
+    [playlists, findTrackById],
   )
 
   const hasPlaylists = decorated.length > 0
@@ -275,6 +275,12 @@ function LibraryPage() {
           <section className="mb-5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 backdrop-blur-xl">
             <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
               <span>{decorated.length} playlists</span>
+              {loading ? (
+                <>
+                  <span className="h-1 w-1 rounded-full bg-zinc-600" />
+                  <span>sync</span>
+                </>
+              ) : null}
               <span className="h-1 w-1 rounded-full bg-zinc-600" />
               <span>{publicCount} públicas</span>
               {featuredPlaylist ? (
@@ -320,7 +326,7 @@ function LibraryPage() {
                   <h1 className="mt-2 text-5xl font-bold tracking-[-0.05em] text-zinc-100">
                     Tus playlists
                   </h1>
-                  <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
+              <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
                     <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">
                       {decorated.length} playlists
                     </span>
@@ -330,6 +336,11 @@ function LibraryPage() {
                     {featuredPlaylist ? (
                       <span className="max-w-md truncate rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1.5 text-violet-300">
                         Featured: {featuredPlaylist.title}
+                      </span>
+                    ) : null}
+                    {error ? (
+                      <span className="max-w-md truncate rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-rose-300">
+                        {error}
                       </span>
                     ) : null}
                   </div>

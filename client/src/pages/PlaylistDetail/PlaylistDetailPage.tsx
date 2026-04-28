@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
-import { tracks as allTracks, findTrackById } from '../../data/tracks.js'
+import { useEffect, useMemo, useState } from 'react'
+import { fetchPlaylistSongs } from '../../lib/api.js'
 import { usePlayer } from '../../lib/playerContext.jsx'
 import { usePlaylists } from '../../lib/playlistsContext.jsx'
+import { useSongs } from '../../lib/songsContext.jsx'
 import {
   AuraAppSidebar,
   AuraDesktopTopBar,
@@ -15,6 +16,13 @@ function navigate(hash: string) {
   if (typeof window === 'undefined') return
   window.location.hash = hash
 }
+
+const SORT_OPTIONS = [
+  { value: 'ingreso', label: 'Ingreso' },
+  { value: 'artista', label: 'Artista' },
+  { value: 'album', label: 'Álbum' },
+  { value: 'reciente', label: 'Reciente' },
+]
 
 // Suma "m:ss" de un array de tracks. Si una canción no tiene duración
 // válida, se ignora. El total se devuelve formateado tipo "1h 24m".
@@ -177,6 +185,27 @@ function PickerRow({ track, onAdd }) {
   )
 }
 
+function SortControls({ value, onChange }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {SORT_OPTIONS.map((option) => (
+        <button
+          className={`rounded-full border px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] transition-colors ${
+            value === option.value
+              ? 'border-violet-400/50 bg-violet-500/20 text-violet-200'
+              : 'border-white/10 bg-white/[0.03] text-zinc-500 hover:text-zinc-200'
+          }`}
+          key={option.value}
+          onClick={() => onChange(option.value)}
+          type="button"
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // Estado vacío que se muestra cuando llegamos a un id de playlist
 // que ya no existe (por ejemplo, fue borrada en otra pestaña). Le
 // damos al usuario un botón para volver al library.
@@ -204,11 +233,34 @@ function PlaylistNotFound() {
   )
 }
 
+function PlaylistLoading() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#051424] px-6 text-center text-[#d4e4fa]">
+      <div className="max-w-md">
+        <Icon className="text-5xl text-violet-400" name="sync" />
+        <h1 className="mt-6 text-3xl font-bold tracking-[-0.04em] text-zinc-100">
+          Cargando playlist
+        </h1>
+      </div>
+    </main>
+  )
+}
+
 function PlaylistDetailPage({ playlistId }: { playlistId: string | null }) {
   const { currentTrack, play } = usePlayer()
-  const { getPlaylist, addTrack, removeTrack, deletePlaylist } = usePlaylists()
+  const {
+    getPlaylist,
+    addTrack,
+    removeTrack,
+    deletePlaylist,
+    loading: playlistsLoading,
+  } = usePlaylists()
+  const { tracks: allTracks, findTrackById } = useSongs()
   // Picker desplegable para agregar canciones del manifiesto.
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [sortMode, setSortMode] = useState('ingreso')
+  const [remoteSortedTracks, setRemoteSortedTracks] = useState(null)
+  const [actionError, setActionError] = useState('')
 
   // Buscamos la playlist por el id que viene de la URL. Si no existe
   // (id inválido o borrada), mostramos un estado vacío con CTA.
@@ -216,21 +268,54 @@ function PlaylistDetailPage({ playlistId }: { playlistId: string | null }) {
 
   // Hooks SIEMPRE arriba, antes de cualquier return condicional, para
   // no romper la regla de "mismo orden en cada render".
-  const playlistTracks = useMemo(() => {
+  const playlistKey = playlist?.trackIds.join('|') ?? ''
+
+  const basePlaylistTracks = useMemo(() => {
     if (!playlist) return []
     return playlist.trackIds
       .map((id) => findTrackById(id))
       .filter((t) => t != null)
-  }, [playlist])
+  }, [playlist, findTrackById])
+
+  useEffect(() => {
+    if (!playlist || sortMode === 'ingreso' || sortMode === 'reciente') {
+      setRemoteSortedTracks(null)
+      return undefined
+    }
+
+    let cancelled = false
+    fetchPlaylistSongs(playlist.id, sortMode)
+      .then((songs) => {
+        if (!cancelled) setRemoteSortedTracks(songs)
+      })
+      .catch(() => {
+        if (!cancelled) setRemoteSortedTracks(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [playlist?.id, playlistKey, sortMode])
+
+  const playlistTracks = useMemo(() => {
+    if (sortMode === 'ingreso') return basePlaylistTracks
+    if (sortMode === 'reciente') return [...basePlaylistTracks].reverse()
+    if (remoteSortedTracks) return remoteSortedTracks
+    return [...basePlaylistTracks].sort((a, b) => {
+      if (sortMode === 'artista') return a.artist.localeCompare(b.artist)
+      if (sortMode === 'album') return a.album.localeCompare(b.album)
+      return 0
+    })
+  }, [basePlaylistTracks, remoteSortedTracks, sortMode])
 
   // Lo que le falta a la playlist: todas las canciones del manifiesto
   // que todavía no están en esta playlist. Eso alimenta el picker.
   const availableTracks = useMemo(() => {
     if (!playlist) return []
     return allTracks.filter((t) => !playlist.trackIds.includes(t.id))
-  }, [playlist])
+  }, [playlist, allTracks])
 
-  if (!playlist) return <PlaylistNotFound />
+  if (!playlist) return playlistsLoading ? <PlaylistLoading /> : <PlaylistNotFound />
 
   // Cover de la playlist: usamos la portada del primer track. Si la
   // playlist está vacía, usamos un gradiente fallback (con un ícono).
@@ -255,24 +340,39 @@ function PlaylistDetailPage({ playlistId }: { playlistId: string | null }) {
     play(track, playlistTracks)
   }
 
-  const handleAddTrack = (trackId: string) => {
-    addTrack(playlist.id, trackId)
+  const handleAddTrack = async (trackId: string) => {
+    setActionError('')
+    try {
+      await addTrack(playlist.id, trackId)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo agregar.')
+    }
   }
 
-  const handleRemoveTrack = (trackId: string) => {
-    removeTrack(playlist.id, trackId)
+  const handleRemoveTrack = async (trackId: string) => {
+    setActionError('')
+    try {
+      await removeTrack(playlist.id, trackId)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo quitar.')
+    }
   }
 
   // Borra la playlist y vuelve al library. Antes pide confirmación
   // porque es destructivo.
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (typeof window === 'undefined') return
     const ok = window.confirm(
       `¿Seguro que querés borrar "${playlist.title}"? No se puede deshacer.`,
     )
     if (!ok) return
-    deletePlaylist(playlist.id)
-    navigate('#library')
+    setActionError('')
+    try {
+      await deletePlaylist(playlist.id)
+      navigate('#library')
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo borrar.')
+    }
   }
 
   return (
@@ -358,6 +458,13 @@ function PlaylistDetailPage({ playlistId }: { playlistId: string | null }) {
               <Icon name={pickerOpen ? 'close' : 'add'} />
               {pickerOpen ? 'Cerrar' : 'Agregar'}
             </button>
+          </section>
+
+          <section className="mb-6">
+            <SortControls onChange={setSortMode} value={sortMode} />
+            {actionError ? (
+              <p className="mt-3 text-sm text-rose-300">{actionError}</p>
+            ) : null}
           </section>
 
           {pickerOpen ? (
@@ -522,6 +629,12 @@ function PlaylistDetailPage({ playlistId }: { playlistId: string | null }) {
           ) : null}
 
           <section className="px-10 py-8">
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <SortControls onChange={setSortMode} value={sortMode} />
+              {actionError ? (
+                <p className="text-sm text-rose-300">{actionError}</p>
+              ) : null}
+            </div>
             {playlistTracks.length === 0 ? (
               <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.03] p-12 text-center backdrop-blur-[20px]">
                 <Icon className="text-4xl text-zinc-600" name="queue_music" />

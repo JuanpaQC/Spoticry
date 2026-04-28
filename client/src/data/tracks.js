@@ -26,7 +26,7 @@ export const tracks = [
   {
     id: 'Ariana',
     title: 'Nasty',
-    artist: 'Ariaana Grande',
+    artist: 'Ariana Grande',
     album: 'Positions',
     duration: '3:21',
     src: '/music/audio/Ariana Grande - nasty (official audio) - ArianaGrandeVevo.mp3',

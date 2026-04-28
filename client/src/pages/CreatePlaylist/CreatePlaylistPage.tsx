@@ -38,6 +38,8 @@ function CreatePlaylistPage() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [isPublic, setIsPublic] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState('')
 
   const { createPlaylist } = usePlaylists()
 
@@ -47,22 +49,34 @@ function CreatePlaylistPage() {
   // Handler de "Crear playlist": valida que haya nombre, llama al store
   // y navega al detalle de la playlist recién creada usando el id que
   // devuelve createPlaylist.
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const cleanTitle = name.trim()
-    if (!cleanTitle) {
+    if (!cleanTitle || isSaving) {
       // Si el nombre está vacío, no hacemos nada. El context igual le
       // pondría 'Untitled Playlist', pero preferimos forzar al usuario
       // a darle un nombre intencionalmente.
       return
     }
 
-    const playlist = createPlaylist({
-      title: cleanTitle,
-      description,
-      isPublic,
-    })
+    setIsSaving(true)
+    setError('')
+    try {
+      const playlist = await createPlaylist({
+        title: cleanTitle,
+        description,
+        isPublic,
+      })
 
-    navigate(`#playlist-detail/${playlist.id}`)
+      if (playlist?.id) {
+        navigate(`#playlist-detail/${playlist.id}`)
+      } else {
+        navigate('#library')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo crear la playlist')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   // Cancelar / cerrar el form: volvemos a la biblioteca.
@@ -70,7 +84,7 @@ function CreatePlaylistPage() {
 
   // Truthy si se puede crear (al menos hay nombre). Lo usamos para
   // deshabilitar el botón visualmente.
-  const canCreate = name.trim().length > 0
+  const canCreate = name.trim().length > 0 && !isSaving
 
   return (
     <main className="min-h-screen bg-[#051424] text-[#d4e4fa]">
@@ -99,12 +113,12 @@ function CreatePlaylistPage() {
 
           <button
             className="text-sm font-semibold uppercase tracking-[0.22em] text-violet-400 transition-colors hover:text-violet-300 disabled:opacity-40"
-            disabled={!canCreate}
-            onClick={handleCreate}
-            type="button"
-          >
-            Save
-          </button>
+              disabled={!canCreate}
+              onClick={handleCreate}
+              type="button"
+            >
+              {isSaving ? 'Saving' : 'Save'}
+            </button>
         </header>
 
         <main className="mx-auto max-w-md px-6 pb-36 pt-28">
@@ -203,13 +217,19 @@ function CreatePlaylistPage() {
               </button>
             </div>
 
+            {error ? (
+              <p className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                {error}
+              </p>
+            ) : null}
+
             <button
               className="flex h-16 w-full items-center justify-center gap-3 rounded-2xl bg-[#c7b0ff] text-sm font-semibold uppercase tracking-[0.24em] text-[#33156d] shadow-[0_0_40px_rgba(139,92,246,0.3)] transition-all duration-300 hover:scale-[1.01] active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
               disabled={!canCreate}
               onClick={handleCreate}
               type="button"
             >
-              Create Playlist
+              {isSaving ? 'Creating...' : 'Create Playlist'}
               <Icon name="arrow_forward" />
             </button>
           </section>
@@ -353,9 +373,12 @@ function CreatePlaylistPage() {
                     onClick={handleCreate}
                     type="button"
                   >
-                    Create Masterpiece
+                    {isSaving ? 'Creating...' : 'Create Masterpiece'}
                   </button>
                 </div>
+                {error ? (
+                  <p className="text-right text-sm text-rose-300">{error}</p>
+                ) : null}
               </div>
             </div>
             </div>

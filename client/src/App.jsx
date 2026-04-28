@@ -5,11 +5,13 @@ import {
 } from './components/player/AppPlayer.tsx'
 import { PlayerProvider } from './lib/playerContext.jsx'
 import { PlaylistsProvider } from './lib/playlistsContext.jsx'
+import { SongsProvider } from './lib/songsContext.jsx'
 import CreatePlaylistPage from './pages/CreatePlaylist/CreatePlaylistPage.tsx'
 import LibraryPage from './pages/Library/LibraryPage.tsx'
 import MenuPage from './pages/Menu/MenuPage.tsx'
 import PlaylistDetailPage from './pages/PlaylistDetail/PlaylistDetailPage.tsx'
 import SearchPage from './pages/Search/SearchPage.tsx'
+import SongsAdminPage from './pages/SongsAdmin/SongsAdminPage.tsx'
 
 // Mapa de pantallas: la clave es lo que va a la izquierda en el hash
 // (`#menu`, `#library`, `#playlist-detail/<id>`...) y el valor es el
@@ -20,6 +22,7 @@ const screens = {
   library: LibraryPage,
   'create-playlist': CreatePlaylistPage,
   'playlist-detail': PlaylistDetailPage,
+  'songs-admin': SongsAdminPage,
 }
 
 // Convierte la URL en un objeto { screen, id }.
@@ -79,13 +82,15 @@ function App() {
   // (no dentro de cada página) para que la canción siga sonando al
   // cambiar de pantalla.
   return (
-    <PlayerProvider>
-      <PlaylistsProvider>
-        <Screen playlistId={route.id} />
-        <MobileMiniPlayer className="fixed bottom-28 left-4 right-4 z-50 lg:hidden" />
-        <DesktopPlayerBar className="fixed inset-x-0 bottom-0 z-50 hidden h-24 items-center justify-between border-t border-white/10 bg-zinc-950/80 px-8 backdrop-blur-xl shadow-[0_-10px_40px_rgba(139,92,246,0.1)] lg:flex" />
-      </PlaylistsProvider>
-    </PlayerProvider>
+    <SongsProvider>
+      <PlayerProvider>
+        <PlaylistsProvider>
+          <Screen playlistId={route.id} />
+          <MobileMiniPlayer className="fixed bottom-28 left-4 right-4 z-50 lg:hidden" />
+          <DesktopPlayerBar className="fixed inset-x-0 bottom-0 z-50 hidden h-24 items-center justify-between border-t border-white/10 bg-zinc-950/80 px-8 backdrop-blur-xl shadow-[0_-10px_40px_rgba(139,92,246,0.1)] lg:flex" />
+        </PlaylistsProvider>
+      </PlayerProvider>
+    </SongsProvider>
   )
 }
 

@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { key: 'home', label: 'Home', icon: 'home', screen: 'menu' },
   { key: 'search', label: 'Search', icon: 'search', screen: 'search' },
   { key: 'library', label: 'Library', icon: 'library_music', screen: 'library' },
+  { key: 'songs', label: 'Songs', icon: 'queue_music', screen: 'songs-admin' },
   { key: 'create', label: 'Create', icon: 'add_circle', screen: 'create-playlist' },
 ]
 

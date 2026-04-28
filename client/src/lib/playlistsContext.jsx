@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   createContext,
   useCallback,
@@ -6,125 +7,131 @@ import {
   useMemo,
   useState,
 } from 'react'
+import {
+  addSongToPlaylist,
+  createPlaylist as createPlaylistRequest,
+  deletePlaylist as deletePlaylistRequest,
+  fetchPlaylists,
+  removeSongFromPlaylist,
+} from './api.js'
 
-// Contexto de playlists del usuario.
-// Se persiste en localStorage para que sobreviva al refresh sin
-// necesidad de backend. Cuando conectemos Rust + Supabase, el
-// PlaylistsProvider va a hacer fetch al servidor y la API expuesta
-// (createPlaylist, deletePlaylist, addTrack...) seguirá igual.
-
-const STORAGE_KEY = 'spoticry.playlists.v1'
-
-// Forma de cada playlist:
-//   id          → identificador único.
-//   title       → nombre que escribió el usuario.
-//   description → descripción opcional.
-//   isPublic    → bool (lo dejamos persistido aunque todavía no lo usamos).
-//   trackIds    → array de ids que apuntan a tracks.js.
-//   createdAt   → epoch ms, sirve para ordenar por más reciente.
-
-function loadFromStorage() {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed
-  } catch (error) {
-    console.warn('[playlists] No se pudo leer localStorage:', error)
-    return []
-  }
-}
-
-function saveToStorage(playlists) {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(playlists))
-  } catch (error) {
-    console.warn('[playlists] No se pudo guardar en localStorage:', error)
-  }
-}
-
-// Genera un id pseudo-único. No usamos UUID porque no necesitamos
-// garantía global; con la marca de tiempo + un random alcanza para
-// distinguir creaciones del mismo usuario.
-function makeId() {
-  return `pl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-}
+const PLAYLISTS_REFRESH_MS = 5_000
 
 const PlaylistsContext = createContext(null)
 
 export function PlaylistsProvider({ children }) {
-  const [playlists, setPlaylists] = useState(loadFromStorage)
+  const [playlists, setPlaylists] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  // Cada cambio del array se persiste. Si más adelante agregamos
-  // sync con backend, este efecto pasa a hacer un PATCH/POST.
+  const refreshPlaylists = useCallback(async () => {
+    try {
+      const nextPlaylists = await fetchPlaylists()
+      setPlaylists(nextPlaylists)
+      setError('')
+      return nextPlaylists
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo cargar playlists')
+      return []
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
-    saveToStorage(playlists)
-  }, [playlists])
+    let active = true
 
-  // Crea una playlist nueva y la devuelve para que el caller pueda
-  // navegar al detalle inmediatamente con el id recién generado.
+    const refresh = async () => {
+      if (!active) return
+      await refreshPlaylists()
+    }
+
+    refresh()
+    const intervalId = window.setInterval(refresh, PLAYLISTS_REFRESH_MS)
+
+    return () => {
+      active = false
+      window.clearInterval(intervalId)
+    }
+  }, [refreshPlaylists])
+
   const createPlaylist = useCallback(
-    ({ title, description = '', isPublic = true } = {}) => {
+    async ({ title } = {}) => {
       const cleanTitle = (title || '').trim() || 'Untitled Playlist'
-      const newPlaylist = {
-        id: makeId(),
-        title: cleanTitle,
-        description: description.trim(),
-        isPublic,
-        trackIds: [],
-        createdAt: Date.now(),
-      }
-      setPlaylists((prev) => [newPlaylist, ...prev])
-      return newPlaylist
+      const created = await createPlaylistRequest({ title: cleanTitle })
+      const nextPlaylists = await refreshPlaylists()
+      return (
+        created ??
+        nextPlaylists.find((playlist) => playlist.title === cleanTitle) ??
+        null
+      )
     },
-    [],
+    [refreshPlaylists],
   )
 
-  const deletePlaylist = useCallback((id) => {
-    setPlaylists((prev) => prev.filter((p) => p.id !== id))
-  }, [])
+  const deletePlaylist = useCallback(
+    async (id) => {
+      await deletePlaylistRequest(id)
+      setPlaylists((prev) => prev.filter((playlist) => playlist.id !== id))
+      await refreshPlaylists()
+    },
+    [refreshPlaylists],
+  )
 
-  // Agrega una canción evitando duplicados (si ya está, no la mete dos veces).
-  const addTrack = useCallback((playlistId, trackId) => {
-    setPlaylists((prev) =>
-      prev.map((p) => {
-        if (p.id !== playlistId) return p
-        if (p.trackIds.includes(trackId)) return p
-        return { ...p, trackIds: [...p.trackIds, trackId] }
-      }),
-    )
-  }, [])
+  const addTrack = useCallback(
+    async (playlistId, trackId) => {
+      const updated = await addSongToPlaylist(playlistId, trackId)
+      if (updated) {
+        setPlaylists((prev) =>
+          prev.map((playlist) => (playlist.id === updated.id ? updated : playlist)),
+        )
+      }
+      await refreshPlaylists()
+    },
+    [refreshPlaylists],
+  )
 
-  const removeTrack = useCallback((playlistId, trackId) => {
-    setPlaylists((prev) =>
-      prev.map((p) => {
-        if (p.id !== playlistId) return p
-        return { ...p, trackIds: p.trackIds.filter((id) => id !== trackId) }
-      }),
-    )
-  }, [])
+  const removeTrack = useCallback(
+    async (playlistId, trackId) => {
+      const updated = await removeSongFromPlaylist(playlistId, trackId)
+      if (updated) {
+        setPlaylists((prev) =>
+          prev.map((playlist) => (playlist.id === updated.id ? updated : playlist)),
+        )
+      }
+      await refreshPlaylists()
+    },
+    [refreshPlaylists],
+  )
 
-  // Helper de lookup, evita repetir .find() en cada componente.
   const getPlaylist = useCallback(
-    (id) => playlists.find((p) => p.id === id) ?? null,
+    (id) => playlists.find((playlist) => playlist.id === id) ?? null,
     [playlists],
   )
 
-  // Memo del value para no obligar a re-render a todos los consumers
-  // cuando el provider re-renderiza por otra razón.
   const value = useMemo(
     () => ({
       playlists,
+      loading,
+      error,
+      refreshPlaylists,
       createPlaylist,
       deletePlaylist,
       addTrack,
       removeTrack,
       getPlaylist,
     }),
-    [playlists, createPlaylist, deletePlaylist, addTrack, removeTrack, getPlaylist],
+    [
+      playlists,
+      loading,
+      error,
+      refreshPlaylists,
+      createPlaylist,
+      deletePlaylist,
+      addTrack,
+      removeTrack,
+      getPlaylist,
+    ],
   )
 
   return (

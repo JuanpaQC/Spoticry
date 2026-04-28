@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   createContext,
   useCallback,
@@ -8,6 +9,7 @@ import {
   useState,
 } from 'react'
 import { tracks } from '../data/tracks.js'
+import { startStreaming, stopStreaming } from './api.js'
 
 // Contexto global del reproductor.
 // Cualquier componente que llame a usePlayer() puede leer el estado
@@ -58,6 +60,33 @@ export function PlayerProvider({ children }) {
   const startedAtRef = useRef(0)
   const offsetRef = useRef(0)
   const rafRef = useRef(0)
+  const streamingTrackIdRef = useRef(null)
+
+  const notifyStreamStart = useCallback((trackId) => {
+    if (!trackId || streamingTrackIdRef.current === trackId) return
+    const previousTrackId = streamingTrackIdRef.current
+    streamingTrackIdRef.current = trackId
+
+    if (previousTrackId) {
+      stopStreaming(previousTrackId).catch((error) => {
+        console.warn('[player] No se pudo detener stream anterior:', error)
+      })
+    }
+
+    startStreaming(trackId).catch((error) => {
+      console.warn('[player] No se pudo registrar reproducción:', error)
+    })
+  }, [])
+
+  const notifyStreamStop = useCallback((trackId = streamingTrackIdRef.current) => {
+    if (!trackId) return
+    if (streamingTrackIdRef.current === trackId) {
+      streamingTrackIdRef.current = null
+    }
+    stopStreaming(trackId).catch((error) => {
+      console.warn('[player] No se pudo detener reproducción:', error)
+    })
+  }, [])
 
   // Crea (perezosamente) el AudioContext y el GainNode master.
   // El graph queda: source → gainNode → destination, así setVolume
@@ -103,21 +132,23 @@ export function PlayerProvider({ children }) {
   // segundos dentro del buffer. Cuando supera la duración, dispara
   // el handler de "fin natural" (que decide qué hacer según repeat
   // y shuffle).
-  tickRef.current = () => {
-    const ctx = audioCtxRef.current
-    const buffer = bufferRef.current
-    if (!ctx || !buffer || !sourceRef.current) return
-    const elapsed = ctx.currentTime - startedAtRef.current
-    const t = offsetRef.current + elapsed
-    if (t >= buffer.duration) {
-      setCurrentTime(buffer.duration)
-      stopSource()
-      handleEndRef.current()
-      return
+  useEffect(() => {
+    tickRef.current = () => {
+      const ctx = audioCtxRef.current
+      const buffer = bufferRef.current
+      if (!ctx || !buffer || !sourceRef.current) return
+      const elapsed = ctx.currentTime - startedAtRef.current
+      const t = offsetRef.current + elapsed
+      if (t >= buffer.duration) {
+        setCurrentTime(buffer.duration)
+        stopSource()
+        handleEndRef.current()
+        return
+      }
+      setCurrentTime(t)
+      rafRef.current = requestAnimationFrame(() => tickRef.current())
     }
-    setCurrentTime(t)
-    rafRef.current = requestAnimationFrame(() => tickRef.current())
-  }
+  }, [stopSource])
 
   const startPlaybackFromOffset = useCallback(
     (offset) => {
@@ -166,10 +197,14 @@ export function PlayerProvider({ children }) {
       // guardado (típico flujo de pause → play).
       if (currentTrack?.id === track.id && bufferRef.current) {
         startPlaybackFromOffset(offsetRef.current)
+        notifyStreamStart(track.id)
         return
       }
 
       // Canción nueva: descargamos + decodificamos.
+      if (streamingTrackIdRef.current && streamingTrackIdRef.current !== track.id) {
+        notifyStreamStop(streamingTrackIdRef.current)
+      }
       stopSource()
       bufferRef.current = null
       offsetRef.current = 0
@@ -189,13 +224,21 @@ export function PlayerProvider({ children }) {
         setDuration(audioBuffer.duration)
         setIsLoading(false)
         startPlaybackFromOffset(0)
+        notifyStreamStart(track.id)
       } catch (error) {
         console.error('[player] Error cargando canción:', error)
         setIsLoading(false)
         setIsPlaying(false)
       }
     },
-    [currentTrack, getCtx, startPlaybackFromOffset, stopSource],
+    [
+      currentTrack,
+      getCtx,
+      notifyStreamStart,
+      notifyStreamStop,
+      startPlaybackFromOffset,
+      stopSource,
+    ],
   )
 
   const pause = useCallback(() => {
@@ -204,12 +247,14 @@ export function PlayerProvider({ children }) {
     offsetRef.current = offsetRef.current + elapsed
     stopSource()
     setIsPlaying(false)
-  }, [stopSource])
+    notifyStreamStop(currentTrack?.id)
+  }, [currentTrack, notifyStreamStop, stopSource])
 
   const resume = useCallback(() => {
     if (!bufferRef.current) return
     startPlaybackFromOffset(offsetRef.current)
-  }, [startPlaybackFromOffset])
+    notifyStreamStart(currentTrack?.id)
+  }, [currentTrack, notifyStreamStart, startPlaybackFromOffset])
 
   const toggle = useCallback(() => {
     if (isPlaying) {
@@ -306,23 +351,37 @@ export function PlayerProvider({ children }) {
   // - 'one'  → la misma canción se vuelve a reproducir desde 0.
   // - 'all'  → siguiente canción de la cola (con o sin shuffle).
   // - 'off'  → simplemente se queda en estado pausado al final.
-  handleEndRef.current = () => {
-    if (repeatMode === 'one' && currentTrack) {
-      offsetRef.current = 0
-      setCurrentTime(0)
-      startPlaybackFromOffset(0)
-      return
+  useEffect(() => {
+    handleEndRef.current = () => {
+      if (repeatMode === 'one' && currentTrack) {
+        notifyStreamStop(currentTrack.id)
+        offsetRef.current = 0
+        setCurrentTime(0)
+        startPlaybackFromOffset(0)
+        notifyStreamStart(currentTrack.id)
+        return
+      }
+      if (repeatMode === 'all') {
+        notifyStreamStop(currentTrack?.id)
+        next()
+        return
+      }
+      notifyStreamStop(currentTrack?.id)
+      setIsPlaying(false)
     }
-    if (repeatMode === 'all') {
-      next()
-      return
-    }
-    setIsPlaying(false)
-  }
+  }, [
+    currentTrack,
+    next,
+    notifyStreamStart,
+    notifyStreamStop,
+    repeatMode,
+    startPlaybackFromOffset,
+  ])
 
   // Cleanup al desmontar la app entera.
   useEffect(() => {
     return () => {
+      notifyStreamStop()
       stopSource()
       if (audioCtxRef.current) {
         audioCtxRef.current.close().catch(() => {})
@@ -330,7 +389,24 @@ export function PlayerProvider({ children }) {
         gainNodeRef.current = null
       }
     }
-  }, [stopSource])
+  }, [notifyStreamStop, stopSource])
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const trackId = streamingTrackIdRef.current
+      if (trackId) {
+        navigator.sendBeacon?.(
+          `${(import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(
+            /\/$/,
+            '',
+          )}/stream/stop/${encodeURIComponent(trackId)}`,
+        )
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [])
 
   const value = useMemo(
     () => ({

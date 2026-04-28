@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { tracks } from '../../data/tracks.js'
+import { useEffect, useMemo, useState } from 'react'
 import { usePlayer } from '../../lib/playerContext.jsx'
+import { useSongs } from '../../lib/songsContext.jsx'
 import {
   AuraAppSidebar,
   AuraDesktopTopBar,
@@ -10,9 +10,6 @@ import {
   profileImage,
 } from '../Aura/auraUi.tsx'
 
-const heroTracks = tracks.filter((track) =>
-  track.cover?.startsWith('/music/covers/'),
-)
 const HERO_COVER_INTERVAL_MS = 5000
 const HERO_COVER_FADE_MS = 700
 
@@ -80,9 +77,14 @@ function TrackRow({ track, onPlay, isActive }) {
 
 function MenuPage() {
   const { play, currentTrack } = usePlayer()
+  const { tracks } = useSongs()
   const [featuredTrackIndex, setFeaturedTrackIndex] = useState(0)
   const [heroCoversReady, setHeroCoversReady] = useState(
-    heroTracks.length === 0,
+    tracks.length === 0,
+  )
+  const heroTracks = useMemo(
+    () => tracks.filter((track) => track.cover),
+    [tracks],
   )
 
   const featuredTrack =
@@ -115,7 +117,7 @@ function MenuPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [heroTracks])
 
   useEffect(() => {
     if (!heroCoversReady || heroTracks.length <= 1) return undefined
