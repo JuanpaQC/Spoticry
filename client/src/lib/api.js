@@ -72,20 +72,35 @@ export async function fetchSongs() {
 }
 
 export async function createSong(values) {
-  const song = await request('/admin/songs', {
+  const formData = new FormData()
+  formData.append('name', values.title)
+  formData.append('artist', values.artist)
+  formData.append('genre', values.genre)
+  formData.append('album', values.album)
+  formData.append('song', values.songFile)
+  formData.append('image', values.imageFile)
+
+  // No establecer Content-Type manualmente: el browser lo setea con el boundary correcto
+  const response = await fetch(apiPath('/admin/songs'), {
     method: 'POST',
-    body: JSON.stringify({
-      name: values.title,
-      artist: values.artist,
-      genre: values.genre,
-      song_url: values.src,
-      image_url: values.cover,
-      album: values.album,
-    }),
+    body: formData,
   })
 
-  if (Array.isArray(song)) return song[0] ? toTrack(song[0]) : null
-  if (song && typeof song === 'object') return toTrack(song)
+  const contentType = response.headers.get('content-type') || ''
+  const payload = contentType.includes('application/json')
+    ? await response.json().catch(() => null)
+    : await response.text().catch(() => '')
+
+  if (!response.ok) {
+    const message =
+      typeof payload === 'string'
+        ? payload
+        : payload?.error || payload?.message || `HTTP ${response.status}`
+    throw new Error(message || `HTTP ${response.status}`)
+  }
+
+  if (Array.isArray(payload)) return payload[0] ? toTrack(payload[0]) : null
+  if (payload && typeof payload === 'object') return toTrack(payload)
   return null
 }
 

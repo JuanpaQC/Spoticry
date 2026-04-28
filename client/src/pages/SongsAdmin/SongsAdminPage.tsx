@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePlayer } from '../../lib/playerContext.jsx'
 import { useSongs } from '../../lib/songsContext.jsx'
 import {
@@ -8,35 +8,102 @@ import {
   Icon,
 } from '../Aura/auraUi.tsx'
 
+// ─── FileDropZone ───────────────────────────────────────────────────────────
+
+interface FileDropZoneProps {
+  accept: string
+  file: File | null
+  onFile: (f: File) => void
+  inputRef: React.RefObject<HTMLInputElement>
+  children: React.ReactNode
+}
+
+function FileDropZone({ accept, file, onFile, inputRef, children }: FileDropZoneProps) {
+  const [isDragging, setIsDragging] = useState(false)
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const f = e.dataTransfer.files[0]
+    if (f) onFile(f)
+  }
+
+  return (
+    <div
+      className={`relative cursor-pointer rounded-xl border-2 border-dashed transition-colors ${
+        isDragging
+          ? 'border-violet-400 bg-violet-500/10'
+          : file
+            ? 'border-violet-500/40 bg-violet-500/5'
+            : 'border-white/10 bg-zinc-950/40 hover:border-violet-500/40'
+      }`}
+      onClick={() => inputRef.current?.click()}
+      onDragEnter={(e) => { e.preventDefault(); setIsDragging(true) }}
+      onDragLeave={() => setIsDragging(false)}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+    >
+      <input
+        ref={inputRef}
+        accept={accept}
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f) }}
+        type="file"
+      />
+      {children}
+    </div>
+  )
+}
+
+// ─── SongForm ────────────────────────────────────────────────────────────────
+
 const emptyForm = {
   title: '',
   artist: '',
   genre: '',
   album: '',
-  src: '',
-  cover: '',
+  songFile: null as File | null,
+  imageFile: null as File | null,
 }
 
-function SongForm({ onSubmit, busy }) {
-  const [form, setForm] = useState(emptyForm)
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
-  const update = (field, value) => {
+function SongForm({ onSubmit, busy }: { onSubmit: (form: typeof emptyForm) => Promise<void>; busy: boolean }) {
+  const [form, setForm] = useState(emptyForm)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const songInputRef = useRef<HTMLInputElement>(null!)
+  const imageInputRef = useRef<HTMLInputElement>(null!)
+
+  const update = (field: keyof typeof emptyForm, value: string | File | null) => {
     setForm((prev) => ({ ...prev, [field]: value }))
   }
+
+  // Genera y limpia el object URL de la preview de portada
+  useEffect(() => {
+    if (!form.imageFile) { setImagePreview(null); return }
+    const url = URL.createObjectURL(form.imageFile)
+    setImagePreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [form.imageFile])
 
   const canSubmit =
     form.title.trim() &&
     form.artist.trim() &&
     form.genre.trim() &&
     form.album.trim() &&
-    form.src.trim() &&
-    form.cover.trim()
+    form.songFile !== null &&
+    form.imageFile !== null
 
-  const handleSubmit = async (event) => {
-    event.preventDefault()
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
     if (!canSubmit || busy) return
     await onSubmit(form)
     setForm(emptyForm)
+    if (songInputRef.current) songInputRef.current.value = ''
+    if (imageInputRef.current) imageInputRef.current.value = ''
   }
 
   return (
@@ -44,89 +111,134 @@ function SongForm({ onSubmit, busy }) {
       className="grid gap-4 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl lg:grid-cols-2"
       onSubmit={handleSubmit}
     >
-      <label className="space-y-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-          Canción
-        </span>
-        <input
-          className="w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white outline-none focus:border-violet-500"
-          onChange={(event) => update('title', event.target.value)}
-          type="text"
-          value={form.title}
-        />
-      </label>
+      {/* Campos de texto */}
+      {(
+        [
+          { field: 'title', label: 'Canción' },
+          { field: 'artist', label: 'Artista' },
+          { field: 'genre', label: 'Género' },
+          { field: 'album', label: 'Álbum' },
+        ] as const
+      ).map(({ field, label }) => (
+        <label className="space-y-2" key={field}>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
+            {label}
+          </span>
+          <input
+            className="w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white outline-none focus:border-violet-500"
+            onChange={(e) => update(field, e.target.value)}
+            type="text"
+            value={form[field] as string}
+          />
+        </label>
+      ))}
 
-      <label className="space-y-2">
+      {/* Drop zone — Portada */}
+      <div className="space-y-2 lg:col-span-1">
         <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-          Artista
+          Portada
         </span>
-        <input
-          className="w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white outline-none focus:border-violet-500"
-          onChange={(event) => update('artist', event.target.value)}
-          type="text"
-          value={form.artist}
-        />
-      </label>
+        <FileDropZone
+          accept="image/*"
+          file={form.imageFile}
+          inputRef={imageInputRef}
+          onFile={(f) => update('imageFile', f)}
+        >
+          {form.imageFile && imagePreview ? (
+            <div className="flex items-center gap-3 p-3" onClick={(e) => e.stopPropagation()}>
+              <img
+                alt="preview"
+                className="h-16 w-16 flex-none rounded-lg object-cover"
+                src={imagePreview}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-white">{form.imageFile.name}</p>
+                <p className="text-xs text-zinc-500">{formatBytes(form.imageFile.size)}</p>
+              </div>
+              <button
+                aria-label="Quitar imagen"
+                className="flex-none text-zinc-500 hover:text-rose-400"
+                onClick={(e) => { e.stopPropagation(); update('imageFile', null) }}
+                type="button"
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <Icon className="text-3xl text-zinc-600" name="image" />
+              <p className="text-xs text-zinc-500">
+                Arrastrá la imagen o hacé click
+              </p>
+              <p className="text-[10px] text-zinc-700">JPG, PNG, WEBP</p>
+            </div>
+          )}
+        </FileDropZone>
+      </div>
 
-      <label className="space-y-2">
+      {/* Drop zone — MP3 */}
+      <div className="space-y-2 lg:col-span-1">
         <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-          Género
+          Archivo de audio
         </span>
-        <input
-          className="w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white outline-none focus:border-violet-500"
-          onChange={(event) => update('genre', event.target.value)}
-          type="text"
-          value={form.genre}
-        />
-      </label>
-
-      <label className="space-y-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-          Álbum
-        </span>
-        <input
-          className="w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white outline-none focus:border-violet-500"
-          onChange={(event) => update('album', event.target.value)}
-          type="text"
-          value={form.album}
-        />
-      </label>
-
-      <label className="space-y-2 lg:col-span-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-          URL MP3
-        </span>
-        <input
-          className="w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white outline-none focus:border-violet-500"
-          onChange={(event) => update('src', event.target.value)}
-          type="url"
-          value={form.src}
-        />
-      </label>
-
-      <label className="space-y-2 lg:col-span-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-500">
-          URL portada
-        </span>
-        <input
-          className="w-full rounded-xl border border-white/10 bg-zinc-950/40 px-4 py-3 text-sm text-white outline-none focus:border-violet-500"
-          onChange={(event) => update('cover', event.target.value)}
-          type="url"
-          value={form.cover}
-        />
-      </label>
+        <FileDropZone
+          accept=".mp3,audio/*"
+          file={form.songFile}
+          inputRef={songInputRef}
+          onFile={(f) => update('songFile', f)}
+        >
+          {form.songFile ? (
+            <div className="flex items-center gap-3 p-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-violet-500/20">
+                <Icon className="text-violet-300" name="audio_file" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-white">{form.songFile.name}</p>
+                <p className="text-xs text-zinc-500">{formatBytes(form.songFile.size)}</p>
+              </div>
+              <button
+                aria-label="Quitar audio"
+                className="flex-none text-zinc-500 hover:text-rose-400"
+                onClick={(e) => { e.stopPropagation(); update('songFile', null) }}
+                type="button"
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <Icon className="text-3xl text-zinc-600" name="audio_file" />
+              <p className="text-xs text-zinc-500">
+                Arrastrá el MP3 o hacé click
+              </p>
+              <p className="text-[10px] text-zinc-700">MP3, OGG, WAV</p>
+            </div>
+          )}
+        </FileDropZone>
+      </div>
 
       <button
         className="flex h-12 items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 text-xs font-bold uppercase tracking-[0.22em] text-white transition-all hover:bg-violet-400 disabled:opacity-40 lg:col-span-2"
         disabled={!canSubmit || busy}
         type="submit"
       >
-        <Icon name="add" />
-        Agregar canción
+        {busy ? (
+          <>
+            <Icon name="sync" />
+            Subiendo...
+          </>
+        ) : (
+          <>
+            <Icon name="add" />
+            Agregar canción
+          </>
+        )}
       </button>
     </form>
   )
 }
+
+// ─── SongRow ─────────────────────────────────────────────────────────────────
 
 function SongRow({ track, onDelete, onCancel, isPending, busy }) {
   return (
@@ -187,6 +299,8 @@ function SongRow({ track, onDelete, onCancel, isPending, busy }) {
     </div>
   )
 }
+
+// ─── SongsAdminPage ──────────────────────────────────────────────────────────
 
 function SongsAdminPage() {
   const { tracks, addTrack, removeTrack, loading, error } = useSongs()

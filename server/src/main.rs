@@ -1,6 +1,8 @@
 use actix_cors::Cors;
+use actix_multipart::Multipart;
 use actix_web::{delete, get, post, web, App, HttpResponse, HttpServer, Responder};
 use dotenv::dotenv;
+use futures_util::StreamExt as _;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -32,14 +34,16 @@ struct Playlist {
     name: String,
     song_ids: Option<Vec<String>>,
 }
-#[derive(Deserialize)]
-struct NewSong {
-    name: String,
-    artist: String,
-    genre: String,
-    song_url: String,
-    image_url: String,
-    album: String,
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 #[derive(Deserialize, Serialize, Clone)]
 struct NewPlaylist {
@@ -92,25 +96,141 @@ async fn get_songs(client: web::Data<Client>, query: web::Query<SongQuery>) -> i
 }
 
 #[post("/admin/songs")]
-async fn add_song(client: web::Data<Client>, body: web::Json<NewSong>) -> impl Responder {
+async fn add_song(client: web::Data<Client>, mut payload: Multipart) -> impl Responder {
     let base_url = env::var("SUPABASE_URL").expect("SUPABASE_URL no definida");
     let api_key = env::var("SECRET_API_KEY").expect("SECRET_API_KEY no definida");
 
-    let url = format!("{}/rest/v1/songs", base_url);
+    let mut name = String::new();
+    let mut artist = String::new();
+    let mut genre = String::new();
+    let mut album = String::new();
+    let mut song_url = String::new();
+    let mut image_url = String::new();
 
+    while let Some(Ok(mut field)) = payload.next().await {
+        let field_name = field.name().unwrap_or("").to_string();
+        let content_type = field
+            .content_type()
+            .map(|ct| ct.to_string())
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        let filename = field
+            .content_disposition()
+            .and_then(|cd| cd.get_filename())
+            .map(sanitize_filename)
+            .unwrap_or_else(|| "file".to_string());
+
+        let mut bytes: Vec<u8> = Vec::new();
+        while let Some(Ok(chunk)) = field.next().await {
+            bytes.extend_from_slice(&chunk);
+        }
+
+        match field_name.as_str() {
+            "name" => name = String::from_utf8_lossy(&bytes).trim().to_string(),
+            "artist" => artist = String::from_utf8_lossy(&bytes).trim().to_string(),
+            "genre" => genre = String::from_utf8_lossy(&bytes).trim().to_string(),
+            "album" => album = String::from_utf8_lossy(&bytes).trim().to_string(),
+
+            "song" if !bytes.is_empty() => {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                let unique = format!("{}-{}", ts, filename);
+                let upload_url =
+                    format!("{}/storage/v1/object/spoticry/songs/{}", base_url, unique);
+
+                match client
+                    .post(&upload_url)
+                    .header("apikey", &api_key)
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .header("Content-Type", &content_type)
+                    .body(bytes)
+                    .send()
+                    .await
+                {
+                    Ok(res) if res.status().is_success() => {
+                        song_url = format!(
+                            "{}/storage/v1/object/public/spoticry/songs/{}",
+                            base_url, unique
+                        );
+                    }
+                    Ok(res) => {
+                        let status = res.status();
+                        let body = res.text().await.unwrap_or_default();
+                        eprintln!("Error subiendo MP3: {} — {}", status, body);
+                        return HttpResponse::InternalServerError()
+                            .body("Error al subir el archivo de audio");
+                    }
+                    Err(e) => {
+                        eprintln!("Error subiendo MP3: {}", e);
+                        return HttpResponse::InternalServerError()
+                            .body("Error al subir el archivo de audio");
+                    }
+                }
+            }
+
+            "image" if !bytes.is_empty() => {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                let unique = format!("{}-{}", ts, filename);
+                let upload_url =
+                    format!("{}/storage/v1/object/spoticry/covers/{}", base_url, unique);
+
+                match client
+                    .post(&upload_url)
+                    .header("apikey", &api_key)
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .header("Content-Type", &content_type)
+                    .body(bytes)
+                    .send()
+                    .await
+                {
+                    Ok(res) if res.status().is_success() => {
+                        image_url = format!(
+                            "{}/storage/v1/object/public/spoticry/covers/{}",
+                            base_url, unique
+                        );
+                    }
+                    Ok(res) => {
+                        let status = res.status();
+                        let body = res.text().await.unwrap_or_default();
+                        eprintln!("Error subiendo imagen: {} — {}", status, body);
+                        return HttpResponse::InternalServerError()
+                            .body("Error al subir la imagen");
+                    }
+                    Err(e) => {
+                        eprintln!("Error subiendo imagen: {}", e);
+                        return HttpResponse::InternalServerError()
+                            .body("Error al subir la imagen");
+                    }
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    if song_url.is_empty() || image_url.is_empty() {
+        return HttpResponse::BadRequest()
+            .body("Se requieren ambos archivos: audio (.mp3) e imagen");
+    }
+
+    let db_url = format!("{}/rest/v1/songs", base_url);
     let new_song = serde_json::json!({
-        "name": body.name,
-        "artist": body.artist,
-        "genre": body.genre,
-        "song_url": body.song_url,
-        "image_url": body.image_url,
-        "album": body.album,
+        "name": name,
+        "artist": artist,
+        "genre": genre,
+        "song_url": song_url,
+        "image_url": image_url,
+        "album": album,
     });
 
     match client
-        .post(&url)
+        .post(&db_url)
         .header("apikey", &api_key)
-        .header("Authorization", format!("Bearer {}", &api_key))
+        .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Prefer", "return=representation")
         .json(&new_song)
@@ -127,7 +247,7 @@ async fn add_song(client: web::Data<Client>, body: web::Json<NewSong>) -> impl R
                     Err(_) => HttpResponse::Created().body("Canción agregada"),
                 }
             } else {
-                HttpResponse::BadRequest().body("Error al agregar canción")
+                HttpResponse::BadRequest().body("Error al guardar la canción en la base de datos")
             }
         }
         Err(e) => {
@@ -690,6 +810,7 @@ async fn main() {
 
         App::new()
             .wrap(cors)
+            .app_data(web::PayloadConfig::default().limit(50 * 1024 * 1024))
             .app_data(web::Data::new(client.clone()))
             .app_data(web::Data::new(playing_now.clone()))
             .service(get_songs)

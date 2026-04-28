@@ -23,3 +23,6 @@ dotenv = "0.15"
 
 # Para streaming de audio (bytes asincrónicos)
 futures-util = "0.3"
+
+# Para recibir archivos desde el cliente (multipart/form-data)
+actix-multipart = "0.7"
